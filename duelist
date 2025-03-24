@@ -1,0 +1,559 @@
+create or replace PACKAGE BODY pk_ext_duelistful AS
+
+    FUNCTION ap_ext_duelistful (
+        cursname IN OUT pk_ext_duelistful.cursname
+    ) RETURN NUMBER AS
+
+        var_l_dat_process              DATE;
+        var_l_session_id               NUMBER := 0;
+        var_ctr_instal                 ln_acct_schedule.ctr_instal%TYPE := 0;
+        var_net_effect_rat             ln_acct_state.rat_int_current%TYPE := 0;
+        var_ctr_instal_ioi             ln_acct_schedule.ctr_instal%TYPE := 0;
+        var_ctr_instal_epi_emi         ln_acct_schedule.ctr_instal%TYPE := 0;
+        var_total_due                  NUMBER := 0;
+        var_dat_next_due               VARCHAR2(20) := NULL;
+        var_l_amt_arrears_due_assessed ln_arrears_table.amt_arrears_due%TYPE := 0;
+        var_ctr_overdue_instal         ln_arrears_table.amt_arrears_due%TYPE := 0;
+        var_l_arrears_count            ln_arrears_table.amt_arrears_due%TYPE := 0;
+        var_total_due_1                NUMBER := 0;
+        CURSOR cursor_duelistfull IS
+        SELECT
+            ln.cod_acct_no,
+            ln.cod_cc_brn,
+            ctr_curr_term_months,
+            ctr_term_months,
+            ctr_instal,
+            replace(brnmast.nam_branch, ',', '') nam_branch,
+            amt_princ_balance, --TOTAL_POS 
+            net_rate,
+            (
+                CASE
+                    WHEN ln.amt_face_value - accbal.amt_disbursed <= 0 THEN
+                        'F'
+                    ELSE
+                        'P'
+                END
+            )                                    disb_status, --DISBURSAL STATUS
+            ln.dat_of_maturity                   dat_of_maturity_d
+        FROM
+            ln_acct_dtls     ln,
+            ln_acct_balances accbal,
+            ba_cc_brn_mast   brnmast
+        WHERE
+                accbal.cod_acct_no = ln.cod_acct_no
+            AND brnmast.cod_cc_brn = ln.cod_cc_brn
+            AND ln.flg_mnt_status = 'A'
+            AND brnmast.flg_mnt_status = 'A'
+            AND cod_acct_stat NOT IN ( 1, 5, 11 )
+            AND ln.ctr_disb > 0
+        ORDER BY
+            ln.cod_acct_no;
+
+    BEGIN
+        BEGIN
+            SELECT
+                dat_process
+            INTO var_l_dat_process
+            FROM
+                ba_bank_mast
+            WHERE
+                flg_mnt_status = 'A';
+
+        EXCEPTION
+            WHEN OTHERS THEN
+                ora_raiserror(sqlcode, 'select failed in ba_bank_mast', $$plsql_line);
+                RETURN 100;
+        END;
+
+        BEGIN
+            var_l_session_id := userenv('SESSIONID');
+        END;
+        BEGIN
+            DELETE FROM temp_ln_x_duelistfull_ext
+            WHERE
+                session_id = var_l_session_id;
+
+        END;
+        FOR rec IN cursor_duelistfull LOOP
+            BEGIN
+                SELECT
+                    ctr_term_months
+                INTO var_ctr_instal
+                FROM
+                    ln_acct_dtls
+                WHERE
+                        cod_acct_no = rec.cod_acct_no
+                    AND flg_mnt_status = 'A';
+
+            EXCEPTION
+                WHEN no_data_found THEN
+                    var_ctr_instal := 0;
+                WHEN OTHERS THEN
+                    ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_acct_dtls FOR VAR_CTR_INSTAL   : ' || rec.cod_acct_no, $$plsql_line
+                    );
+                    RETURN 95;
+            END;
+
+--            BEGIN
+--                    SELECT
+--                        nvl(round(rat_int_current, 4), 0) -- LOAN  EFF  RATE --VAR_NET_EFFECT_RAT--change
+--                    INTO var_net_effect_rat
+--                    FROM
+--                        ln_acct_state
+--                    WHERE
+--                        cod_acct_no = rec.cod_acct_no;
+--
+--                EXCEPTION
+--                    WHEN no_data_found THEN
+--                        var_net_effect_rat := 0;
+--                    WHEN OTHERS THEN
+--                        ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_acct_state FOR var_net_effect_rat   : ' || rec.cod_acct_no,
+--                        $$plsql_line);
+--                        RETURN 95;
+--                END;
+--
+--                IF ( var_net_effect_rat = 0 ) THEN
+--                    BEGIN
+--                        SELECT
+--                            rat_int_slab
+--                        INTO var_net_effect_rat
+--                        FROM
+--                            ln_acct_rates_detl
+--                        WHERE
+--                                cod_acct_no = rec.cod_acct_no
+--                            AND ctr_from_dat_slab = (
+--                                SELECT
+--                                    MAX(ctr_from_dat_slab)
+--                                FROM
+--                                    ln_acct_rates_detl
+--                                WHERE
+--                                        cod_acct_no = rec.cod_acct_no
+--                                    AND ctr_int_srl = 0
+--                                    AND ctr_from_dat_slab < '01-Jan-2099'
+--                            )
+--                            AND ctr_amd_no = (
+--                                SELECT
+--                                    MAX(ctr_amd_no)
+--                                FROM
+--                                    ln_acct_rates_detl
+--                                WHERE
+--                                        cod_acct_no = rec.cod_acct_no
+--                                    AND ctr_int_srl = 0
+--                                    AND ctr_from_dat_slab < '01-Jan-2099'
+--                            )
+--                            AND ctr_int_srl = 0
+--                            AND ctr_from_dat_slab < '01-Jan-2099';
+--
+--                    EXCEPTION
+--                        WHEN no_data_found THEN
+--                            var_net_effect_rat := 0;
+--                        WHEN OTHERS THEN
+--                            ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_acct_rates_detl FOR var_net_effect_rat   : ' || rec.cod_acct_no,
+--                            $$plsql_line);
+--                            RETURN 95;
+--                    END;
+--                END IF;
+BEGIN
+                SELECT
+				nvl(NET_RATE ,0)      
+             INTO   var_net_effect_rat   --pswani 15-MAY-2024 , taken query from LNM10.
+            FROM
+                ln_acct_pricing_rate_detl
+            WHERE
+                    cod_acct_no = rec.cod_acct_no
+                AND ctr_amd_no = (
+                    SELECT
+                        MAX(ctr_amd_no)
+                    FROM
+                        ln_acct_pricing_rate_detl
+                    WHERE
+                        cod_acct_no = rec.cod_acct_no
+                )
+                AND dat_from = (
+                    SELECT
+                        MAX(dat_from)
+                    FROM
+                        ln_acct_pricing_rate_detl
+                    WHERE
+                            cod_acct_no = rec.cod_acct_no
+                        AND dat_from < pk_ba_global.dat_process);
+
+                 EXCEPTION
+                        WHEN no_data_found THEN
+                            var_net_effect_rat := 0;
+                        WHEN OTHERS THEN
+                            ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_acct_pricing_rate_detl FOR var_net_effect_rat   : ' || rec.cod_acct_no,
+                            $$plsql_line);
+                            RETURN 95;
+                END;
+
+        BEGIN
+                SELECT
+                    nvl(SUM(amt_arrears_due),0)
+                                     -- TOTAL_DUE --VAR_TOTAL_DUE--if amt_arrears_due is null than  upto cod_acctNO only
+                INTO var_total_due
+                FROM
+                    ln_arrears_table
+                WHERE
+               --DAT_ARREAR_CANCELLED = '01-JAN-1800'
+                    cod_arrear_type IN ( 'I', 'N', 'C' )
+                    AND cod_acct_no = rec.cod_acct_no
+                    AND dat_arrears_assessed > (
+                            SELECT
+                                MIN(dat_stage_start)
+                            FROM
+                                ln_acct_schedule
+                            WHERE
+                                    cod_acct_no = rec.cod_acct_no
+                                AND flg_mnt_status = 'A'
+                                AND cod_instal_rule IN (
+                                    SELECT
+                                        cod_inst_rule
+                                    FROM
+                                        ln_inst_rules
+                                    WHERE
+                                        cod_inst_calc_method IN ( 'EMI', 'EPI' )
+                                        AND flg_mnt_status = 'A'
+                            )
+                    );
+
+            EXCEPTION
+                WHEN no_data_found THEN
+                    var_total_due := 0;
+                WHEN OTHERS THEN
+                    ora_raiserror(sqlcode, 'SELECT FAILED FROM ci_custmast_ext FOR VAR_NAM_CUST_SPOUSE   : ' || rec.cod_acct_no, $$plsql_line
+                    );
+            END;
+
+
+--       BEGIN --commented on 06 MAY 2024 pswani , no need for pre emi due.
+--                    SELECT
+--                        SUM(amt_arrears_due)
+--                                     -- TOTAL_DUE --VAR_TOTAL_DUE
+--                    INTO var_total_due_1
+--                    FROM
+--                        ln_arrears_table
+--                    WHERE
+--                        cod_arrear_type IN ( 'I', 'N', 'C' )
+--                        AND cod_acct_no = rec.cod_acct_no;
+--
+--                EXCEPTION
+--                    WHEN no_data_found THEN
+--                        var_total_due_1 := 0;
+--                    WHEN OTHERS THEN
+--                        ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_arrears_table FOR var_total_due_1   : ' || rec.cod_acct_no, $$plsql_line);
+--                END;
+
+--                IF ( var_total_due = 0 ) THEN
+--                    var_total_due := var_total_due_1;
+--                END IF;
+
+
+            IF ( rec.dat_of_maturity_d < var_l_dat_process ) THEN
+                var_dat_next_due := '01-JAN-1800';
+            ELSE
+                BEGIN
+                    SELECT
+                        dat_next_due -- CURRENT_MONTH_INSTLAMENT_DUE_DATE --VAR_DAT_NEXT_DUE
+                    INTO var_dat_next_due
+                    FROM
+                        ln_acct_state
+                    WHERE
+                        cod_acct_no = rec.cod_acct_no;
+
+                EXCEPTION
+                    WHEN no_data_found THEN
+                        var_dat_next_due := NULL;
+                    WHEN OTHERS THEN
+                        ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_acct_state FOR VAR_DAT_NEXT_DUE   : ' || rec.cod_acct_no, $$plsql_line
+                        );
+                END;
+            END IF;
+
+            BEGIN
+                SELECT
+                    round(SUM(amt_arrears_due) / SUM(amt_arrears_assessed),
+                          2)
+                INTO var_l_amt_arrears_due_assessed   -- OVERDUE_INSTL_COUNT 
+                FROM
+                    ln_arrears_table
+                WHERE
+                        cod_acct_no = rec.cod_acct_no
+                    AND amt_arrears_due > 0
+                    AND cod_arrear_type IN ( 'C', 'I', 'N' )
+                    AND dat_arrears_assessed < var_l_dat_process
+                    AND dat_arrears_due > (
+                        SELECT
+                            MIN(dat_stage_start)
+                        FROM
+                            ln_acct_schedule
+                        WHERE
+                                cod_acct_no = rec.cod_acct_no
+                            AND flg_mnt_status = 'A'
+                            AND cod_instal_rule IN (
+                                SELECT
+                                    cod_inst_rule
+                                FROM
+                                    ln_inst_rules
+                                WHERE
+                                    cod_inst_calc_method IN ( 'EMI', 'EPI' )
+                                    AND flg_mnt_status = 'A'
+                            )
+                    );
+
+            EXCEPTION
+                WHEN no_data_found THEN
+                    var_l_amt_arrears_due_assessed := 0;
+                WHEN OTHERS THEN
+                    ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_arrears_table FOR VAR_l_AMT_ARREARS_DUE_ASSESSED   : ' || rec.cod_acct_no
+                    , $$plsql_line);
+            END;
+
+            BEGIN
+                SELECT
+                    COUNT(*)
+                INTO var_l_arrears_count
+                FROM
+                    ln_arrears_table
+                WHERE
+                        cod_acct_no = rec.cod_acct_no
+                    AND amt_arrears_due > 0
+                    AND cod_arrear_type IN ( 'C' );
+
+            EXCEPTION
+                WHEN no_data_found THEN
+                    var_l_arrears_count := 0;
+                WHEN OTHERS THEN
+                    ora_raiserror(sqlcode, 'SELECT FAILED FROM ln_arrears_table FOR VAR_L_ARREARS_COUNT   : ' || rec.cod_acct_no, $$plsql_line
+                    );
+            END;
+
+            var_ctr_overdue_instal := var_l_arrears_count * var_l_amt_arrears_due_assessed;
+            BEGIN
+                INSERT INTO temp_ln_x_duelistfull_ext (
+                    session_id,
+                    old_loan_no,
+                    cod_acct_no,
+                    nam_branch,
+                    ctr_instal,
+                    ctr_instal_no,
+                    ctr_overdue_instal,
+                    total_due,
+                    amt_lpp_arrears_due,
+                    amt_pre_emi,
+                    amt_cbb,
+                    amt_other,
+                    dat_next_due,
+                    amt_princ_balance,
+                    disb_status,
+                    amt_next_due,
+                    dat_stage_start,
+                    net_effect_rat,
+                    dat_stage_end
+                ) VALUES (
+                    var_l_session_id,
+                    (
+                        SELECT
+                            cod_acct_no_old
+                        FROM
+                            ln_x_old_new_acct_xref
+                        WHERE
+                            cod_acct_no_new = rec.cod_acct_no
+                    ),
+                    rec.cod_acct_no,
+                    replace(rec.nam_branch, ',', ' '),
+                    var_ctr_instal, -- TOTAL_NO_OF_INSTL 
+                    (
+                            SELECT
+                                COUNT(*)--change need to be done
+              -- TOTAL_BILLED_INSTL_NO  --VAR_CTR_INSTAL_NO,
+                            FROM
+                                ln_arrears_table 
+                            WHERE
+                                    cod_acct_no = rec.cod_acct_no
+                                AND COD_ARREAR_TYPE = 'C'
+
+                    ),
+                    var_ctr_overdue_instal,
+                    var_total_due,
+                    (
+                        SELECT
+                            nvl(SUM(amt_arrears_due),
+                                0) -- LPP 
+                        FROM
+                            ln_arrears_table
+                        WHERE
+                                dat_arrear_cancelled = '01-jan-1800'
+                            AND cod_arrear_type IN ( 'L', 'A' )
+                            AND cod_acct_no = rec.cod_acct_no
+                    ),
+                    (
+                        SELECT
+                            nvl(SUM(amt_arrears_due),
+                                0) -- PRE_EMI 
+                        FROM
+                            ln_arrears_table
+                        WHERE
+                                cod_acct_no = rec.cod_acct_no
+                            AND cod_arrear_type IN ( 'I', 'N' )
+                            AND dat_arrears_assessed <= (
+                                SELECT
+                                    MAX(dat_stage_end)
+                                FROM
+                                    ln_acct_schedule
+                                WHERE
+                                        cod_acct_no = rec.cod_acct_no
+                                    AND flg_mnt_status = 'A'
+                                    AND cod_instal_rule IN (
+                                        SELECT
+                                            cod_inst_rule
+                                        FROM
+                                            ln_inst_rules
+                                        WHERE
+                                            cod_inst_calc_method IN ( 'IOI' )
+                                            AND flg_mnt_status = 'A'
+                                    )
+                            )
+                    ),
+                    (
+                        SELECT
+                            nvl(SUM(amt_arrears_due),
+                                0) -- CBC_DUE 
+                        FROM
+                            ln_arrears_table
+                        WHERE
+                                dat_arrear_cancelled = '01-JAN-1800'
+                            AND cod_arrear_charge IN ( 110, 1110 ,259 )
+                            AND cod_acct_no = rec.cod_acct_no
+                    ),
+                    (
+                        SELECT
+                            nvl(SUM(amt_arrears_due),
+                                0) -- OTHER_CHARGES_DUE 
+                        FROM
+                            ln_arrears_table
+                        WHERE
+                                dat_arrear_cancelled = '01-jan-1800'
+                            AND cod_arrear_type IN ( 'F', 'D' )
+                            AND cod_acct_no = rec.cod_acct_no
+                            AND cod_arrear_charge NOT IN ( 110, 1110 ,259 )
+                    ),
+                    nvl(var_dat_next_due, 0),
+                    (
+                        SELECT
+                            nvl(amt_princ_balance, 0) --TOTAL_POS
+                        FROM
+                            ln_acct_balances
+                        WHERE
+                            cod_acct_no = rec.cod_acct_no
+                    ),
+                   -- decode(rec.disb_status, 'F', 'FULLY DISBURSED', 'PARTIALLY DISBURSED'),
+                    ap_ln_x_get_disb_status(rec.cod_acct_no) ,
+                    (
+                        SELECT
+                            nvl(amt_next_due, 0) -- CURRENT_MONTH_INSTLAMENT 
+                        FROM
+                            ln_acct_state
+                        WHERE
+                            cod_acct_no = rec.cod_acct_no
+                    ),
+                    (
+                        SELECT
+                            MIN(dat_first_instal) -- First_Emi_Date 
+                        FROM
+                            ln_acct_schedule
+                        WHERE
+                                cod_acct_no = rec.cod_acct_no
+                            AND flg_mnt_status = 'A'
+                            AND cod_instal_rule IN (
+                                SELECT
+                                    cod_inst_rule
+                                FROM
+                                    ln_inst_rules
+                                WHERE
+                                    cod_inst_calc_method IN ( 'EPI', 'EMI' )
+                                    AND flg_mnt_status = 'A'
+                            )
+                    ),
+                     round(var_net_effect_rat, 4),
+                    (
+                        SELECT
+                            MAX(dat_stage_end) -- Last_Emi_Date 
+                        FROM
+                            ln_acct_schedule
+                        WHERE
+                                cod_acct_no = rec.cod_acct_no
+                            AND flg_mnt_status = 'A'
+                            AND cod_instal_rule IN (
+                                SELECT
+                                    cod_inst_rule
+                                FROM
+                                    ln_inst_rules
+                                WHERE
+                                    cod_inst_calc_method IN ( 'EPI', 'EMI' )
+                                    AND flg_mnt_status = 'A'
+                            )
+                    )
+                );
+
+            EXCEPTION
+                WHEN OTHERS THEN
+                    ora_raiserror(sqlcode, 'INSERT FAILED TEMP_LN_X_DUELISTFULL_EXT', $$plsql_line);
+                    RETURN 95;
+            END;
+
+        END LOOP;
+
+        BEGIN
+            OPEN cursname FOR SELECT
+                                                    'LOAN_ID'                           loanid_h,
+                                                    'LOAN_NO'                           loanno_h,
+                                                    'LOAN_BRANCH'                       loanbranch_h,
+                                                    'TOTAL_NO_OF_INSTL'                 totalnoofinstl_h,
+                                                    'TOTAL_BILLED_INSTL_NO'             totalbilledinstlno_h,
+                                                    'OVERDUE_INSTL_COUNT'               overdueinstlcount_h,
+                                                    'TOTAL_DUE'                         totaldue_h,
+                                                    'LPP'                               lpp_h,
+                                                    'PRE_EMI'                           preemi_h,
+                                                    'CBC_DUE'                           cbcdue_h,
+                                                    'OTHER_CHARGES_DUE'                 otherchargesdue_h,
+                                                    'CURRENT_MONTH_INSTLAMENT_DUE_DATE' currentmonthinstlmntdate_h,
+                                                    'TOTAL_POS'                         totalpos_h,
+                                                    'DISBURSAL_STATUS'                  disbursalstatus_h,
+                                                    'CURRENT_MONTH_INSTLAMENT'          currentmonthinstlmnt_h,
+                                                    'First_Emi_Date'                    firstemidate_h,
+                                                    'LOAN_EFF_RATE'                     loaneffrate_h,
+                                                    'Last_Emi_Date'                     lastemidate_h,
+                                                    old_loan_no                         loanid_d,
+                                                    cod_acct_no                         loanno_d,
+                                                    nam_branch                          loanbranch_d,
+                                                    ctr_instal                          totalnoofinstl_d,
+                                                    ctr_instal_no                       totalbilledinstlno_d,
+                                                    ctr_overdue_instal                  overdueinstlcount_d,
+                                                    total_due                           totaldue_d,
+                                                    amt_lpp_arrears_due                 lpp_d,
+                                                    amt_pre_emi                         preemi_d,
+                                                    amt_cbb                             cbcdue_d,
+                                                    amt_other                           otherchargesdue_d,
+                                                    dat_next_due                        currentmonthinstlmntdate_d,
+                                                    amt_princ_balance                   totalpos_d,
+                                                    disb_status                         disbursalstatus_d,
+                                                    amt_next_due                        currentmonthinstlmnt_d,
+                                                    dat_stage_start                     firstemidate_d,
+                                                    net_effect_rat                      loaneffrate_d,
+                                                    dat_stage_end                       lastemidate_d
+                                                FROM
+                                                    temp_ln_x_duelistfull_ext
+                              WHERE
+                                  session_id = var_l_session_id;
+
+        EXCEPTION
+            WHEN OTHERS THEN
+                ora_raiserror(sqlcode, 'Open Cursor failed for Pk_Ext_DueListFul', $$plsql_line);
+                RETURN 100;
+        END;
+
+        RETURN 0;
+    END;
+
+END;
