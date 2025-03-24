@@ -1,0 +1,72 @@
+SH-NPL
+Sarfeasi Status
+LOAN_NO
+Cust. ID
+Collection Responsibility
+Emp. Code
+Team
+Case Disb.by
+R.O Emp Code
+RO
+STATE 
+REGION 
+LOAN_BRANCH 
+CUSTOMER_NAME 
+EMI/PEMI
+"OP DPD
+Scale"
+Op.DPD
+"Current
+DPD
+Scale"
+DPD
+Current Status
+TOTAL_DUE 
+TOTAL_POS 
+Cr
+Ticket
+RF Cases
+CURRENT_MONTH_INSTLAMENT 
+MOBILE_NUMBER 
+ADDRESS 
+TAHSIL 
+DISTRICT_DESC 
+BOOKING_DATE 
+CHEQUE_IN_TRANSIT_AMT 
+CHEQUE_IN_TRANSIT_COUNT 
+TOTAL_NO_OF_INSTL 
+TOTAL_BILLED_INSTL_NO
+TOTAL_RECEIV_INSTL
+OVERDUE_INSTL_COUNT
+OVERDUE_PRIN
+OVERDUE_INTEREST
+LPP
+PRE_EMI
+CBC_DUE
+OTHER_CHARGES_DUE
+LAST_RECEIVED_DATE/KNOCKOFF  DATE 
+LAST_RECEIPT_AMOUNT 
+lOAN_AMOUNT
+LAST_EMI_DATE
+SCHEME
+LOAN  EFF  RATE 
+DISBURSAL_STATUS
+Cycle
+Status
+Book
+Classification
+Cycle Date
+Unique
+Flag
+New Mora
+Collx Bkt
+Bucket Head
+Product Category
+Repayment Status
+Sec 138 Status
+Paid Status
+EMD Status
+Live Loan Status
+Penal Collection Allocation
+Penal Amount Outstanding (NIL OD i.e. EMI paid but charges due)
+Penal Amount Received
